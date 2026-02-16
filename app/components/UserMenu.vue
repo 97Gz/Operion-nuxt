@@ -7,23 +7,22 @@ defineProps<{
 
 const colorMode = useColorMode()
 const appConfig = useAppConfig()
-const { user, clear } = useUserSession()
+const authStore = useAuthStore()
 
 const colors = ['red', 'orange', 'amber', 'yellow', 'lime', 'green', 'emerald', 'teal', 'cyan', 'sky', 'blue', 'indigo', 'violet', 'purple', 'fuchsia', 'pink', 'rose']
 const neutrals = ['slate', 'gray', 'zinc', 'neutral', 'stone']
 
 const items = computed<DropdownMenuItem[][]>(() => ([[{
   type: 'label',
-  label: user.value?.name || user.value?.username,
+  label: authStore.user?.username || '用户',
   avatar: {
-    src: user.value?.avatar,
-    alt: user.value?.name || user.value?.username
+    icon: 'i-lucide-user'
   }
 }], [{
-  label: 'Theme',
+  label: '主题',
   icon: 'i-lucide-palette',
   children: [{
-    label: 'Primary',
+    label: '主色调',
     slot: 'chip',
     chip: appConfig.ui.colors.primary,
     content: {
@@ -36,14 +35,13 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
       slot: 'chip',
       checked: appConfig.ui.colors.primary === color,
       type: 'checkbox',
-      onSelect: (e) => {
+      onSelect: (e: Event) => {
         e.preventDefault()
-
         appConfig.ui.colors.primary = color
       }
     }))
   }, {
-    label: 'Neutral',
+    label: '中性色',
     slot: 'chip',
     chip: appConfig.ui.colors.neutral === 'neutral' ? 'old-neutral' : appConfig.ui.colors.neutral,
     content: {
@@ -56,28 +54,26 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
       slot: 'chip',
       type: 'checkbox',
       checked: appConfig.ui.colors.neutral === color,
-      onSelect: (e) => {
+      onSelect: (e: Event) => {
         e.preventDefault()
-
         appConfig.ui.colors.neutral = color
       }
     }))
   }]
 }, {
-  label: 'Appearance',
+  label: '外观',
   icon: 'i-lucide-sun-moon',
   children: [{
-    label: 'Light',
+    label: '浅色',
     icon: 'i-lucide-sun',
     type: 'checkbox',
     checked: colorMode.value === 'light',
     onSelect(e: Event) {
       e.preventDefault()
-
       colorMode.preference = 'light'
     }
   }, {
-    label: 'Dark',
+    label: '深色',
     icon: 'i-lucide-moon',
     type: 'checkbox',
     checked: colorMode.value === 'dark',
@@ -91,52 +87,10 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
     }
   }]
 }], [{
-  label: 'Templates',
-  icon: 'i-lucide-layout-template',
-  children: [{
-    label: 'Starter',
-    to: 'https://starter-template.nuxt.dev/'
-  }, {
-    label: 'Landing',
-    to: 'https://landing-template.nuxt.dev/'
-  }, {
-    label: 'Docs',
-    to: 'https://docs-template.nuxt.dev/'
-  }, {
-    label: 'SaaS',
-    to: 'https://saas-template.nuxt.dev/'
-  }, {
-    label: 'Dashboard',
-    to: 'https://dashboard-template.nuxt.dev/'
-  }, {
-    label: 'Chat',
-    to: 'https://chat-template.nuxt.dev/',
-    color: 'primary',
-    checked: true,
-    type: 'checkbox'
-  }, {
-    label: 'Portfolio',
-    to: 'https://portfolio-template.nuxt.dev/'
-  }, {
-    label: 'Changelog',
-    to: 'https://changelog-template.nuxt.dev/'
-  }]
-}], [{
-  label: 'Documentation',
-  icon: 'i-lucide-book-open',
-  to: 'https://ui.nuxt.com/docs/getting-started/installation/nuxt',
-  target: '_blank'
-}, {
-  label: 'GitHub repository',
-  icon: 'i-simple-icons-github',
-  to: 'https://github.com/nuxt-ui-templates/chat',
-  target: '_blank'
-}], [{
-  label: 'Log out',
+  label: '退出登录',
   icon: 'i-lucide-log-out',
   onSelect() {
-    clear()
-    navigateTo('/')
+    authStore.logout()
   }
 }]]))
 </script>
@@ -149,12 +103,11 @@ const items = computed<DropdownMenuItem[][]>(() => ([[{
   >
     <UButton
       v-bind="{
-        label: collapsed ? undefined : (user?.name || user?.username),
+        label: collapsed ? undefined : (authStore.user?.username || '用户'),
         trailingIcon: collapsed ? undefined : 'i-lucide-chevrons-up-down'
       }"
       :avatar="{
-        src: user?.avatar || undefined,
-        alt: user?.name || user?.username
+        icon: 'i-lucide-user'
       }"
       color="neutral"
       variant="ghost"

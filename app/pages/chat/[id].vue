@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import type { DefineComponent } from 'vue'
-import { Chat } from '@ai-sdk/vue'
-import { DefaultChatTransport } from 'ai'
-import type { UIMessage } from 'ai'
+import type { UIMessage, ChatStatus } from 'ai'
+import type { ChatStreamPacket } from '~~/shared/types/api'
 import { useClipboard } from '@vueuse/core'
-import { getTextFromMessage } from '@nuxt/ui/utils/ai'
+import { messageDtoToUIMessage } from '~/stores/conversation'
+import { chatApi } from '~/api/chat'
 import ProseStreamPre from '../../components/prose/PreStream.vue'
 
 const components = {
@@ -14,92 +14,190 @@ const components = {
 const route = useRoute()
 const toast = useToast()
 const clipboard = useClipboard()
-const { model } = useModels()
+const conversationStore = useConversationStore()
 
-function getFileName(url: string): string {
-  try {
-    const urlObj = new URL(url)
-    const pathname = urlObj.pathname
-    const filename = pathname.split('/').pop() || 'file'
-    return decodeURIComponent(filename)
-  } catch {
-    return 'file'
-  }
-}
-
-const {
-  dropzoneRef,
-  isDragging,
-  files,
-  isUploading,
-  uploadedFiles,
-  addFiles,
-  removeFile,
-  clearFiles
-} = useFileUploadWithStatus(route.params.id as string)
-
-const { data } = await useFetch(`/api/chats/${route.params.id}`, {
-  cache: 'force-cache'
-})
-if (!data.value) {
-  throw createError({ statusCode: 404, statusMessage: 'Chat not found' })
-}
-
+const chatId = ref(route.params.id as string)
+const messages = ref<UIMessage[]>([])
+const status = ref<ChatStatus>('ready')
 const input = ref('')
+const chatError = ref<Error | undefined>(undefined)
+const isNew = computed(() => chatId.value === 'new')
 
-const chat = new Chat({
-  id: data.value.id,
-  messages: data.value.messages,
-  transport: new DefaultChatTransport({
-    api: `/api/chats/${data.value.id}`,
-    body: {
-      model: model.value
-    }
-  }),
-  onData: (dataPart) => {
-    if (dataPart.type === 'data-chat-title') {
-      refreshNuxtData('chats')
-    }
-  },
-  onError(error) {
-    const { message } = typeof error.message === 'string' && error.message[0] === '{' ? JSON.parse(error.message) : error
+let abortFn: (() => void) | null = null
+
+async function loadHistory() {
+  if (isNew.value) return
+
+  if (conversationStore.conversations.length === 0) {
+    await conversationStore.fetchConversations()
+  }
+
+  const conv = conversationStore.getByExternalId(chatId.value)
+  if (!conv) return
+
+  try {
+    const msgs = await conversationStore.loadMessages(conv.id)
+    messages.value = msgs
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(messageDtoToUIMessage)
+  } catch {
     toast.add({
-      description: message,
+      title: '加载历史消息失败',
       icon: 'i-lucide-alert-circle',
-      color: 'error',
-      duration: 0
+      color: 'error'
     })
   }
-})
+}
 
-async function handleSubmit(e: Event) {
+function sendMessage(text: string) {
+  if (!text.trim() || status.value === 'streaming' || status.value === 'submitted') return
+
+  const userMsg: UIMessage = {
+    id: `user-${Date.now()}`,
+    role: 'user',
+    parts: [{ type: 'text' as const, text: text.trim() }]
+  }
+  messages.value = [...messages.value, userMsg]
+
+  status.value = 'submitted'
+  chatError.value = undefined
+
+  const assistantId = `assistant-${Date.now()}`
+  let assistantAdded = false
+  let fullText = ''
+
+  const api = chatApi()
+  const { promise, abort } = api.streamChat({
+    message: text.trim(),
+    conversationId: isNew.value ? null : chatId.value,
+    agentName: null,
+
+    onStarted(packet: ChatStreamPacket) {
+      status.value = 'streaming'
+
+      if (isNew.value && packet.conversationId) {
+        chatId.value = packet.conversationId
+        window.history.replaceState({}, '', `/chat/${packet.conversationId}`)
+        conversationStore.fetchConversations()
+      }
+
+      const newMsg: UIMessage = {
+        id: packet.messageId || assistantId,
+        role: 'assistant',
+        parts: [{ type: 'text' as const, text: '' }]
+      }
+      messages.value = [...messages.value, newMsg]
+      assistantAdded = true
+    },
+
+    onDelta(packet: ChatStreamPacket) {
+      if (!assistantAdded) {
+        const newMsg: UIMessage = {
+          id: assistantId,
+          role: 'assistant',
+          parts: [{ type: 'text' as const, text: '' }]
+        }
+        messages.value = [...messages.value, newMsg]
+        assistantAdded = true
+      }
+
+      fullText += packet.delta || ''
+      const updated = [...messages.value]
+      const lastIdx = updated.length - 1
+      if (lastIdx >= 0 && updated[lastIdx]!.role === 'assistant') {
+        updated[lastIdx] = {
+          ...updated[lastIdx]!,
+          parts: [{ type: 'text' as const, text: fullText }]
+        }
+        messages.value = updated
+      }
+    },
+
+    onCompleted() {
+      status.value = 'ready'
+      conversationStore.fetchConversations()
+    },
+
+    onError(packet: ChatStreamPacket) {
+      status.value = 'error'
+      chatError.value = new Error(packet.error || '请求失败')
+      toast.add({
+        title: packet.error || '请求失败',
+        icon: 'i-lucide-alert-circle',
+        color: 'error',
+        duration: 0
+      })
+    }
+  })
+
+  abortFn = abort
+
+  promise.catch(() => {
+    if (status.value === 'streaming' || status.value === 'submitted') {
+      status.value = 'error'
+      chatError.value = new Error('连接中断')
+    }
+  })
+}
+
+function handleSubmit(e: Event) {
   e.preventDefault()
-  if (input.value.trim() && !isUploading.value) {
-    chat.sendMessage({
-      text: input.value,
-      files: uploadedFiles.value.length > 0 ? uploadedFiles.value : undefined
-    })
+  if (input.value.trim()) {
+    sendMessage(input.value)
     input.value = ''
-    clearFiles()
+  }
+}
+
+function stopChat() {
+  abortFn?.()
+  status.value = 'ready'
+}
+
+function regenerate() {
+  const lastUser = [...messages.value].reverse().find(m => m.role === 'user')
+  if (!lastUser) return
+
+  const lastAssistantIdx = messages.value.findLastIndex(m => m.role === 'assistant')
+  if (lastAssistantIdx >= 0) {
+    messages.value = messages.value.filter((_, i) => i !== lastAssistantIdx)
+  }
+
+  const textPart = lastUser.parts.find((p: { type: string }) => p.type === 'text')
+  const text = textPart && 'text' in textPart ? (textPart as { type: 'text', text: string }).text : ''
+  if (text) {
+    sendMessage(text)
   }
 }
 
 const copied = ref(false)
 
-function copy(e: MouseEvent, message: UIMessage) {
-  clipboard.copy(getTextFromMessage(message))
-
+function copy(_e: MouseEvent, message: Record<string, unknown>) {
+  const msg = message as unknown as UIMessage
+  let content = ''
+  if (msg.parts) {
+    for (const p of msg.parts) {
+      if (p.type === 'text' && 'text' in p) {
+        content = (p as { type: 'text', text: string }).text
+        break
+      }
+    }
+  }
+  clipboard.copy(content)
   copied.value = true
-
-  setTimeout(() => {
-    copied.value = false
-  }, 2000)
+  setTimeout(() => { copied.value = false }, 2000)
 }
 
-onMounted(() => {
-  if (data.value?.messages.length === 1) {
-    chat.regenerate()
+onMounted(async () => {
+  const pending = conversationStore.consumePendingMessage()
+  if (pending && isNew.value) {
+    sendMessage(pending)
+  } else {
+    await loadHistory()
   }
+})
+
+onBeforeUnmount(() => {
+  abortFn?.()
 })
 </script>
 
@@ -110,92 +208,54 @@ onMounted(() => {
     </template>
 
     <template #body>
-      <DragDropOverlay :show="isDragging" />
-      <UContainer ref="dropzoneRef" class="flex-1 flex flex-col gap-4 sm:gap-6">
+      <UContainer class="flex-1 flex flex-col gap-4 sm:gap-6">
         <UChatMessages
           should-auto-scroll
-          :messages="chat.messages"
-          :status="chat.status"
-          :assistant="chat.status !== 'streaming' ? { actions: [{ label: 'Copy', icon: copied ? 'i-lucide-copy-check' : 'i-lucide-copy', onClick: copy }] } : { actions: [] }"
+          :messages="(messages as any)"
+          :status="status"
+          :assistant="status !== 'streaming' ? { actions: [{ label: 'Copy', icon: copied ? 'i-lucide-copy-check' : 'i-lucide-copy', onClick: copy }] } : { actions: [] }"
           :spacing-offset="160"
           class="lg:pt-(--ui-header-height) pb-4 sm:pb-6"
         >
           <template #content="{ message }">
-            <template v-for="(part, index) in message.parts" :key="`${message.id}-${part.type}-${index}${'state' in part ? `-${part.state}` : ''}`">
+            <template v-for="(part, index) in (message as any).parts" :key="`${(message as any).id}-${part.type}-${index}`">
               <Reasoning
                 v-if="part.type === 'reasoning'"
                 :text="part.text"
                 :is-streaming="part.state !== 'done'"
               />
-              <!-- Only render markdown for assistant messages to prevent XSS from user input -->
               <MDCCached
-                v-else-if="part.type === 'text' && message.role === 'assistant'"
+                v-else-if="part.type === 'text' && (message as any).role === 'assistant'"
                 :value="part.text"
-                :cache-key="`${message.id}-${index}`"
+                :cache-key="`${(message as any).id}-${index}`"
                 :components="components"
                 :parser-options="{ highlight: false }"
                 class="*:first:mt-0 *:last:mb-0"
               />
-              <!-- User messages are rendered as plain text (safely escaped by Vue) -->
-              <p v-else-if="part.type === 'text' && message.role === 'user'" class="whitespace-pre-wrap">
+              <p v-else-if="part.type === 'text' && (message as any).role === 'user'" class="whitespace-pre-wrap">
                 {{ part.text }}
               </p>
-              <ToolWeather
-                v-else-if="part.type === 'tool-weather'"
-                :invocation="(part as WeatherUIToolInvocation)"
-              />
-              <ToolChart
-                v-else-if="part.type === 'tool-chart'"
-                :invocation="(part as ChartUIToolInvocation)"
-              />
-              <FileAvatar
-                v-else-if="part.type === 'file'"
-                :name="getFileName(part.url)"
-                :type="part.mediaType"
-                :preview-url="part.url"
-              />
             </template>
           </template>
         </UChatMessages>
 
         <UChatPrompt
           v-model="input"
-          :error="chat.error"
-          :disabled="isUploading"
+          :error="chatError"
           variant="subtle"
           class="sticky bottom-0 [view-transition-name:chat-prompt] rounded-b-none z-10"
           :ui="{ base: 'px-1.5' }"
           @submit="handleSubmit"
         >
-          <template v-if="files.length > 0" #header>
-            <div class="flex flex-wrap gap-2">
-              <FileAvatar
-                v-for="fileWithStatus in files"
-                :key="fileWithStatus.id"
-                :name="fileWithStatus.file.name"
-                :type="fileWithStatus.file.type"
-                :preview-url="fileWithStatus.previewUrl"
-                :status="fileWithStatus.status"
-                :error="fileWithStatus.error"
-                removable
-                @remove="removeFile(fileWithStatus.id)"
-              />
-            </div>
-          </template>
-
           <template #footer>
-            <div class="flex items-center gap-1">
-              <FileUploadButton @files-selected="addFiles($event)" />
-              <ModelSelect v-model="model" />
-            </div>
+            <div />
 
             <UChatPromptSubmit
-              :status="chat.status"
-              :disabled="isUploading"
+              :status="status"
               color="neutral"
               size="sm"
-              @stop="chat.stop()"
-              @reload="chat.regenerate()"
+              @stop="stopChat"
+              @reload="regenerate"
             />
           </template>
         </UChatPrompt>

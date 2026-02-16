@@ -1,79 +1,33 @@
 <script setup lang="ts">
 const input = ref('')
-const loading = ref(false)
-const chatId = crypto.randomUUID()
+const conversationStore = useConversationStore()
 
-const { model } = useModels()
-
-const {
-  dropzoneRef,
-  isDragging,
-  files,
-  isUploading,
-  uploadedFiles,
-  addFiles,
-  removeFile,
-  clearFiles
-} = useFileUploadWithStatus(chatId)
-
-async function createChat(prompt: string) {
-  input.value = prompt
-  loading.value = true
-
-  const parts: Array<{ type: string, text?: string, mediaType?: string, url?: string }> = [{ type: 'text', text: prompt }]
-
-  if (uploadedFiles.value.length > 0) {
-    parts.push(...uploadedFiles.value)
-  }
-
-  const chat = await $fetch('/api/chats', {
-    method: 'POST',
-    body: {
-      id: chatId,
-      message: {
-        role: 'user',
-        parts
-      }
-    }
-  })
-
-  refreshNuxtData('chats')
-  navigateTo(`/chat/${chat?.id}`)
+function createChat(prompt: string) {
+  if (!prompt.trim()) return
+  conversationStore.setPendingMessage(prompt.trim())
+  navigateTo('/chat/new')
 }
 
-async function onSubmit() {
-  await createChat(input.value)
-  clearFiles()
+function onSubmit() {
+  createChat(input.value)
 }
 
 const quickChats = [
   {
-    label: 'Why use Nuxt UI?',
-    icon: 'i-logos-nuxt-icon'
+    label: '你好，请介绍一下你自己',
+    icon: 'i-lucide-bot'
   },
   {
-    label: 'Help me create a Vue composable',
+    label: '帮我写一段 Vue 3 的组件代码',
     icon: 'i-logos-vue'
   },
   {
-    label: 'Tell me more about UnJS',
-    icon: 'i-logos-unjs'
+    label: '解释什么是 TypeScript 泛型',
+    icon: 'i-lucide-code'
   },
   {
-    label: 'Why should I consider VueUse?',
-    icon: 'i-logos-vueuse'
-  },
-  {
-    label: 'Tailwind CSS best practices',
-    icon: 'i-logos-tailwindcss-icon'
-  },
-  {
-    label: 'What is the weather in Bordeaux?',
+    label: '今天的天气怎么样？',
     icon: 'i-lucide-sun'
-  },
-  {
-    label: 'Show me a chart of sales data',
-    icon: 'i-lucide-line-chart'
   }
 ]
 </script>
@@ -85,44 +39,23 @@ const quickChats = [
     </template>
 
     <template #body>
-      <DragDropOverlay :show="isDragging" />
-      <UContainer ref="dropzoneRef" class="flex-1 flex flex-col justify-center gap-4 sm:gap-6 py-8">
+      <UContainer class="flex-1 flex flex-col justify-center gap-4 sm:gap-6 py-8">
         <h1 class="text-3xl sm:text-4xl text-highlighted font-bold">
-          How can I help you today?
+          有什么我可以帮你的？
         </h1>
 
         <UChatPrompt
           v-model="input"
-          :status="loading ? 'streaming' : 'ready'"
-          :disabled="isUploading"
+          status="ready"
           class="[view-transition-name:chat-prompt]"
           variant="subtle"
           :ui="{ base: 'px-1.5' }"
           @submit="onSubmit"
         >
-          <template v-if="files.length > 0" #header>
-            <div class="flex flex-wrap gap-2">
-              <FileAvatar
-                v-for="fileWithStatus in files"
-                :key="fileWithStatus.id"
-                :name="fileWithStatus.file.name"
-                :type="fileWithStatus.file.type"
-                :preview-url="fileWithStatus.previewUrl"
-                :status="fileWithStatus.status"
-                :error="fileWithStatus.error"
-                removable
-                @remove="removeFile(fileWithStatus.id)"
-              />
-            </div>
-          </template>
-
           <template #footer>
-            <div class="flex items-center gap-1">
-              <FileUploadButton @files-selected="addFiles($event)" />
-              <ModelSelect v-model="model" />
-            </div>
+            <div />
 
-            <UChatPromptSubmit color="neutral" size="sm" :disabled="isUploading" />
+            <UChatPromptSubmit color="neutral" size="sm" />
           </template>
         </UChatPrompt>
 

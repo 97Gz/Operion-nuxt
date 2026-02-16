@@ -13,21 +13,18 @@ useHead({
     { rel: 'icon', href: '/favicon.ico' }
   ],
   htmlAttrs: {
-    lang: 'en'
+    lang: 'zh-CN'
   }
 })
 
-const title = 'Nuxt AI Chatbot template'
-const description = 'A full-featured, hackable Nuxt AI chatbot template made with Nuxt UI.'
+const title = 'Operion AI Chat'
+const description = 'Operion AI 对话平台'
 
 useSeoMeta({
   title,
   description,
   ogTitle: title,
-  ogDescription: description,
-  ogImage: 'https://ui.nuxt.com/assets/templates/nuxt/chat-light.png',
-  twitterImage: 'https://ui.nuxt.com/assets/templates/nuxt/chat-light.png',
-  twitterCard: 'summary_large_image'
+  ogDescription: description
 })
 </script>
 

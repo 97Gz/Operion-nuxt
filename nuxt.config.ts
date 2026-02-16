@@ -1,13 +1,13 @@
-// https://nuxt.com/docs/api/configuration/nuxt-config
 export default defineNuxtConfig({
   modules: [
     '@nuxt/eslint',
     '@nuxt/ui',
     '@nuxtjs/mdc',
-    '@nuxthub/core',
-    'nuxt-auth-utils',
+    '@pinia/nuxt',
     'nuxt-charts'
   ],
+
+  ssr: false,
 
   devtools: {
     enabled: true
@@ -15,12 +15,17 @@ export default defineNuxtConfig({
 
   css: ['~/assets/css/main.css'],
 
+  runtimeConfig: {
+    public: {
+      apiBase: process.env.NUXT_PUBLIC_API_BASE || 'http://localhost:5000'
+    }
+  },
+
   mdc: {
     headings: {
       anchorLinks: false
     },
     highlight: {
-      // noApiRoute: true
       shikiEngine: 'javascript'
     }
   },
@@ -30,17 +35,6 @@ export default defineNuxtConfig({
   },
 
   compatibilityDate: '2024-07-11',
-
-  nitro: {
-    experimental: {
-      openAPI: true
-    }
-  },
-
-  hub: {
-    db: 'sqlite',
-    blob: true
-  },
 
   eslint: {
     config: {

@@ -2,21 +2,22 @@ import { isToday, isYesterday, subMonths } from 'date-fns'
 
 export interface UIChat {
   id: string
+  externalId?: string
   label: string
   icon: string
+  to?: string
   createdAt: string
 }
 
 export function useChats(chats: Ref<UIChat[] | undefined>) {
   const groups = computed(() => {
-    // Group chats by date
     const today: UIChat[] = []
     const yesterday: UIChat[] = []
     const lastWeek: UIChat[] = []
     const lastMonth: UIChat[] = []
     const older: Record<string, UIChat[]> = {}
 
-    const oneWeekAgo = subMonths(new Date(), 0.25) // ~7 days ago
+    const oneWeekAgo = subMonths(new Date(), 0.25)
     const oneMonthAgo = subMonths(new Date(), 1)
 
     chats.value?.forEach((chat) => {
@@ -31,8 +32,7 @@ export function useChats(chats: Ref<UIChat[] | undefined>) {
       } else if (chatDate >= oneMonthAgo) {
         lastMonth.push(chat)
       } else {
-        // Format: "January 2023", "February 2023", etc.
-        const monthYear = chatDate.toLocaleDateString('en-US', {
+        const monthYear = chatDate.toLocaleDateString('zh-CN', {
           month: 'long',
           year: 'numeric'
         })
@@ -45,54 +45,34 @@ export function useChats(chats: Ref<UIChat[] | undefined>) {
       }
     })
 
-    // Sort older chats by month-year in descending order (newest first)
     const sortedMonthYears = Object.keys(older).sort((a, b) => {
       const dateA = new Date(a)
       const dateB = new Date(b)
       return dateB.getTime() - dateA.getTime()
     })
 
-    // Create formatted groups for navigation
     const formattedGroups = [] as Array<{
       id: string
       label: string
       items: Array<UIChat>
     }>
 
-    // Add groups that have chats
     if (today.length) {
-      formattedGroups.push({
-        id: 'today',
-        label: 'Today',
-        items: today
-      })
+      formattedGroups.push({ id: 'today', label: '今天', items: today })
     }
 
     if (yesterday.length) {
-      formattedGroups.push({
-        id: 'yesterday',
-        label: 'Yesterday',
-        items: yesterday
-      })
+      formattedGroups.push({ id: 'yesterday', label: '昨天', items: yesterday })
     }
 
     if (lastWeek.length) {
-      formattedGroups.push({
-        id: 'last-week',
-        label: 'Last week',
-        items: lastWeek
-      })
+      formattedGroups.push({ id: 'last-week', label: '最近一周', items: lastWeek })
     }
 
     if (lastMonth.length) {
-      formattedGroups.push({
-        id: 'last-month',
-        label: 'Last month',
-        items: lastMonth
-      })
+      formattedGroups.push({ id: 'last-month', label: '最近一月', items: lastMonth })
     }
 
-    // Add each month-year group
     sortedMonthYears.forEach((monthYear) => {
       if (older[monthYear]?.length) {
         formattedGroups.push({

@@ -4,41 +4,30 @@ import { LazyModalConfirm } from '#components'
 const route = useRoute()
 const toast = useToast()
 const overlay = useOverlay()
-const { loggedIn, openInPopup } = useUserSession()
+const authStore = useAuthStore()
+const conversationStore = useConversationStore()
 
 const open = ref(false)
 
 const deleteModal = overlay.create(LazyModalConfirm, {
   props: {
-    title: 'Delete chat',
-    description: 'Are you sure you want to delete this chat? This cannot be undone.'
+    title: '删除会话',
+    description: '确定要删除此会话吗？删除后无法恢复。'
   }
 })
 
-const { data: chats, refresh: refreshChats } = await useFetch('/api/chats', {
-  key: 'chats',
-  transform: data => data.map(chat => ({
-    id: chat.id,
-    label: chat.title || 'Untitled',
-    to: `/chat/${chat.id}`,
+await conversationStore.fetchConversations()
+
+const chats = computed(() =>
+  conversationStore.sortedConversations.map(conv => ({
+    id: conv.id,
+    externalId: conv.externalConversationId,
+    label: conv.title || '未命名',
+    to: `/chat/${conv.externalConversationId}`,
     icon: 'i-lucide-message-circle',
-    createdAt: chat.createdAt
+    createdAt: conv.lastMessageAt || conv.createdAt
   }))
-})
-
-onNuxtReady(async () => {
-  const first10 = (chats.value || []).slice(0, 10)
-  for (const chat of first10) {
-    // prefetch the chat and let the browser cache it
-    await $fetch(`/api/chats/${chat.id}`)
-  }
-})
-
-watch(loggedIn, () => {
-  refreshChats()
-
-  open.value = false
-})
+)
 
 const { groups } = useChats(chats)
 
@@ -50,28 +39,26 @@ const items = computed(() => groups.value?.flatMap((group) => {
     ...item,
     slot: 'chat' as const,
     icon: undefined,
-    class: item.label === 'Untitled' ? 'text-muted' : ''
+    class: item.label === '未命名' ? 'text-muted' : ''
   }))]
 }))
 
 async function deleteChat(id: string) {
   const instance = deleteModal.open()
   const result = await instance.result
-  if (!result) {
-    return
-  }
+  if (!result) return
 
-  await $fetch(`/api/chats/${id}`, { method: 'DELETE' })
+  await conversationStore.deleteConversation(id)
 
   toast.add({
-    title: 'Chat deleted',
-    description: 'Your chat has been deleted',
+    title: '会话已删除',
     icon: 'i-lucide-trash'
   })
 
-  refreshChats()
-
-  if (route.params.id === id) {
+  const conv = conversationStore.conversations.find(c => c.id === id)
+  if (conv && route.params.id === conv.externalConversationId) {
+    navigateTo('/')
+  } else if (route.params.id && !conversationStore.getByExternalId(route.params.id as string)) {
     navigateTo('/')
   }
 }
@@ -108,7 +95,7 @@ defineShortcuts({
       <template #default="{ collapsed }">
         <div class="flex flex-col gap-1.5">
           <UButton
-            v-bind="collapsed ? { icon: 'i-lucide-plus' } : { label: 'New chat' }"
+            v-bind="collapsed ? { icon: 'i-lucide-plus' } : { label: '新建会话' }"
             variant="soft"
             block
             to="/"
@@ -145,25 +132,16 @@ defineShortcuts({
       </template>
 
       <template #footer="{ collapsed }">
-        <UserMenu v-if="loggedIn" :collapsed="collapsed" />
-        <UButton
-          v-else
-          :label="collapsed ? '' : 'Login with GitHub'"
-          icon="i-simple-icons-github"
-          color="neutral"
-          variant="ghost"
-          class="w-full"
-          @click="openInPopup('/auth/github')"
-        />
+        <UserMenu v-if="authStore.isLoggedIn" :collapsed="collapsed" />
       </template>
     </UDashboardSidebar>
 
     <UDashboardSearch
-      placeholder="Search chats..."
+      placeholder="搜索会话..."
       :groups="[{
         id: 'links',
         items: [{
-          label: 'New chat',
+          label: '新建会话',
           to: '/',
           icon: 'i-lucide-square-pen'
         }]
