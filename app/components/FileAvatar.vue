@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { removeRandomSuffix, getFileIcon } from '~~/shared/utils/file'
+
 interface FileAvatarProps {
   name: string
   type: string

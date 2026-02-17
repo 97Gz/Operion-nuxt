@@ -1,10 +1,12 @@
-import type { ChatStreamPacket } from '~~/shared/types/api'
+import type { ChatStreamPacket, ChatFileAttachment } from '~~/shared/types/api'
 import { apiStreamFetch } from './client'
 
 export interface StreamChatOptions {
   message: string
   conversationId?: string | null
   agentName?: string | null
+  modelId?: string | null
+  files?: ChatFileAttachment[]
   onStarted?: (packet: ChatStreamPacket) => void
   onDelta?: (packet: ChatStreamPacket) => void
   onCompleted?: (packet: ChatStreamPacket) => void
@@ -25,17 +27,24 @@ function parseSSELine(line: string): ChatStreamPacket | null {
 export function chatApi() {
   return {
     streamChat(options: StreamChatOptions) {
-      const { response, abort } = apiStreamFetch('/api/chat/stream', {
+      const body: Record<string, unknown> = {
         message: options.message,
         conversationId: options.conversationId ?? null,
-        agentName: options.agentName ?? null
-      })
+        agentName: options.agentName ?? null,
+        modelId: options.modelId ?? null
+      }
+
+      if (options.files && options.files.length > 0) {
+        body.files = options.files
+      }
+
+      const { response, abort } = apiStreamFetch('/api/chat/stream', body)
 
       const promise = (async () => {
         const res = await response
         if (!res.ok) {
-          const body = await res.json().catch(() => ({}))
-          const errorMsg = (body as Record<string, string>).error || `请求失败 (${res.status})`
+          const respBody = await res.json().catch(() => ({}))
+          const errorMsg = (respBody as Record<string, string>).error || `请求失败 (${res.status})`
           options.onError?.({
             type: 'error',
             conversationId: '',

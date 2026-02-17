@@ -1,5 +1,5 @@
 <script setup lang="ts">
-const { loggedIn } = useUserSession()
+import { FILE_UPLOAD_CONFIG } from '~~/shared/utils/file'
 
 const emit = defineEmits<{
   filesSelected: [files: File[]]
@@ -20,30 +20,21 @@ function handleFileSelect(e: Event) {
 </script>
 
 <template>
-  <UTooltip
-    :content="{
-      side: 'top'
-    }"
-    :text="!loggedIn ? 'You need to be logged in to upload files' : ''"
+  <label :for="inputId">
+    <UButton
+      icon="i-lucide-paperclip"
+      variant="ghost"
+      color="neutral"
+      size="sm"
+      as="span"
+    />
+  </label>
+  <input
+    :id="inputId"
+    type="file"
+    multiple
+    :accept="FILE_UPLOAD_CONFIG.acceptPattern"
+    class="hidden"
+    @change="handleFileSelect"
   >
-    <label :for="inputId" :class="{ 'cursor-not-allowed opacity-50': !loggedIn }">
-      <UButton
-        icon="i-lucide-paperclip"
-        variant="ghost"
-        color="neutral"
-        size="sm"
-        as="span"
-        :disabled="!loggedIn"
-      />
-    </label>
-    <input
-      :id="inputId"
-      type="file"
-      multiple
-      :accept="FILE_UPLOAD_CONFIG.acceptPattern"
-      class="hidden"
-      :disabled="!loggedIn"
-      @change="handleFileSelect"
-    >
-  </UTooltip>
 </template>

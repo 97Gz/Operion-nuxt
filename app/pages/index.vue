@@ -1,10 +1,17 @@
 <script setup lang="ts">
 const input = ref('')
 const conversationStore = useConversationStore()
+const { model } = useModels()
+const { files, isUploading, uploadedFiles, addFiles, removeFile, clearFiles } = useFileUploadLocal()
 
 function createChat(prompt: string) {
   if (!prompt.trim()) return
   conversationStore.setPendingMessage(prompt.trim())
+  // 文件附件信息存储到 store 以便 chat 页面读取
+  if (uploadedFiles.value.length > 0) {
+    conversationStore.setPendingFiles(uploadedFiles.value)
+  }
+  clearFiles()
   navigateTo('/chat/new')
 }
 
@@ -47,15 +54,35 @@ const quickChats = [
         <UChatPrompt
           v-model="input"
           status="ready"
+          :disabled="isUploading"
           class="[view-transition-name:chat-prompt]"
           variant="subtle"
           :ui="{ base: 'px-1.5' }"
           @submit="onSubmit"
         >
-          <template #footer>
-            <div />
+          <template v-if="files.length > 0" #header>
+            <div class="flex flex-wrap gap-2">
+              <FileAvatar
+                v-for="fileWithStatus in files"
+                :key="fileWithStatus.id"
+                :name="fileWithStatus.file.name"
+                :type="fileWithStatus.file.type"
+                :preview-url="fileWithStatus.previewUrl"
+                :status="fileWithStatus.status"
+                :error="fileWithStatus.error"
+                removable
+                @remove="removeFile(fileWithStatus.id)"
+              />
+            </div>
+          </template>
 
-            <UChatPromptSubmit color="neutral" size="sm" />
+          <template #footer>
+            <div class="flex items-center gap-1">
+              <FileUploadButton @files-selected="addFiles($event)" />
+              <ModelSelect v-model="model" />
+            </div>
+
+            <UChatPromptSubmit color="neutral" size="sm" :disabled="isUploading" />
           </template>
         </UChatPrompt>
 

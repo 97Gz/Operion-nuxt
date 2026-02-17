@@ -1,19 +1,21 @@
 import { defineStore } from 'pinia'
 import type { UIMessage } from 'ai'
-import type { ConversationDto, MessageDto } from '~~/shared/types/api'
+import type { ConversationDto, MessageDto, ChatFileAttachment } from '~~/shared/types/api'
 import { conversationApi } from '~/api/conversation'
 
 interface ConversationState {
   conversations: ConversationDto[]
   loading: boolean
   pendingMessage: string | null
+  pendingFiles: ChatFileAttachment[]
 }
 
 export const useConversationStore = defineStore('conversation', {
   state: (): ConversationState => ({
     conversations: [],
     loading: false,
-    pendingMessage: null
+    pendingMessage: null,
+    pendingFiles: []
   }),
 
   getters: {
@@ -69,10 +71,20 @@ export const useConversationStore = defineStore('conversation', {
       this.pendingMessage = message
     },
 
+    setPendingFiles(files: ChatFileAttachment[]) {
+      this.pendingFiles = files
+    },
+
     consumePendingMessage(): string | null {
       const msg = this.pendingMessage
       this.pendingMessage = null
       return msg
+    },
+
+    consumePendingFiles(): ChatFileAttachment[] {
+      const f = [...this.pendingFiles]
+      this.pendingFiles = []
+      return f
     }
   }
 })

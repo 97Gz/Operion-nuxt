@@ -81,9 +81,9 @@ defineShortcuts({
       class="bg-elevated/50"
     >
       <template #header="{ collapsed }">
-        <NuxtLink to="/" class="flex items-end gap-0.5">
-          <Logo class="h-8 w-auto shrink-0" />
-          <span v-if="!collapsed" class="text-xl font-bold text-highlighted">Chat</span>
+        <NuxtLink to="/" class="flex items-center gap-1.5">
+          <UIcon name="i-lucide-bot" class="size-7 text-primary shrink-0" />
+          <span v-if="!collapsed" class="text-lg font-bold text-highlighted">Operion</span>
         </NuxtLink>
 
         <div v-if="!collapsed" class="flex items-center gap-1.5 ms-auto">

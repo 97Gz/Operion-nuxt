@@ -35,10 +35,18 @@ export interface UserInfo {
 
 /* ── Chat ────────────────────────────────────── */
 
+export interface ChatFileAttachment {
+  mediaType: string
+  url: string
+  fileName?: string
+}
+
 export interface ChatRequest {
   message: string
   conversationId?: string | null
   agentName?: string | null
+  modelId?: string | null
+  files?: ChatFileAttachment[]
 }
 
 export interface ChatResponse {
@@ -56,6 +64,33 @@ export interface ChatStreamPacket {
   delta?: string
   text?: string
   error?: string
+  modelId?: string
+  inputTokens?: number
+  outputTokens?: number
+}
+
+/* ── Models ──────────────────────────────────── */
+
+export interface AIModelDto {
+  modelId: string
+  modelName: string
+  icon: string
+  default: boolean
+}
+
+/* ── Invocation (Token Counts) ───────────────── */
+
+export interface InvocationTokenInfo {
+  inputTokenCount: number | null
+  outputTokenCount: number | null
+  totalTokenCount: number | null
+  modelId: string | null
+  durationMs: number | null
+}
+
+export interface ConversationInvocationInfo extends InvocationTokenInfo {
+  chatMessageId: string
+  chatMessageExternalId: string
 }
 
 /* ── Conversation ────────────────────────────── */
