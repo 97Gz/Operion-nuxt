@@ -57,7 +57,7 @@ export interface ChatResponse {
 }
 
 export interface ChatStreamPacket {
-  type: 'started' | 'delta' | 'completed' | 'error'
+  type: 'started' | 'delta' | 'completed' | 'error' | 'tool_call' | 'tool_result' | 'reasoning'
   conversationId: string
   agentName: string
   messageId?: string
@@ -67,6 +67,12 @@ export interface ChatStreamPacket {
   modelId?: string
   inputTokens?: number
   outputTokens?: number
+  toolName?: string
+  toolDisplayName?: string
+  toolCallId?: string
+  toolArguments?: string
+  toolResult?: string
+  reasoning?: string
 }
 
 /* ── Models ──────────────────────────────────── */
@@ -118,6 +124,7 @@ export interface MessageDto {
   authorName: string
   source: string
   content: string
+  contentJson: string
   createdAt: string
 }
 

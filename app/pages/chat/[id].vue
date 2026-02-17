@@ -2,8 +2,9 @@
 import type { DefineComponent } from 'vue'
 import type { UIMessage, ChatStatus } from 'ai'
 import type { ChatStreamPacket, ChatFileAttachment } from '~~/shared/types/api'
+import type { ToolInvocationPart } from '~/components/tool/Invocation.vue'
 import { useClipboard } from '@vueuse/core'
-import { messageDtoToUIMessage } from '~/stores/conversation'
+import { messageDtosToUIMessages } from '~/stores/conversation'
 import { chatApi } from '~/api/chat'
 import { invocationApi } from '~/api/invocation'
 import ProseStreamPre from '../../components/prose/PreStream.vue'
@@ -27,6 +28,7 @@ const chatError = ref<Error | undefined>(undefined)
 const isNew = computed(() => chatId.value === 'new')
 const tokenCounts = ref<Record<string, { input: number | null, output: number | null }>>({})
 
+const toolInvocations = ref<Record<string, ToolInvocationPart>>({})
 let abortFn: (() => void) | null = null
 
 async function loadHistory() {
@@ -41,9 +43,7 @@ async function loadHistory() {
 
   try {
     const msgs = await conversationStore.loadMessages(conv.id)
-    messages.value = msgs
-      .filter(m => m.role === 'user' || m.role === 'assistant')
-      .map(messageDtoToUIMessage)
+    messages.value = messageDtosToUIMessages(msgs)
 
     const assistantMsgs = messages.value.filter(m => m.role === 'assistant')
     if (assistantMsgs.length > 0) {
@@ -95,11 +95,33 @@ function sendMessage(text: string, fileAttachments?: ChatFileAttachment[]) {
 
   status.value = 'submitted'
   chatError.value = undefined
+  toolInvocations.value = {}
 
   const assistantId = `assistant-${Date.now()}`
   let assistantAdded = false
   let fullText = ''
+  let reasoningText = ''
   let completedMessageId = ''
+
+  function rebuildAssistantParts() {
+    const parts: Array<Record<string, unknown>> = []
+    if (reasoningText) {
+      parts.push({ type: 'reasoning', text: reasoningText, state: status.value === 'streaming' ? 'streaming' : 'done' })
+    }
+    const invList = Object.values(toolInvocations.value)
+    for (const inv of invList) {
+      parts.push(inv as unknown as Record<string, unknown>)
+    }
+    if (fullText || invList.length === 0) {
+      parts.push({ type: 'text', text: fullText })
+    }
+    const updated = [...messages.value]
+    const lastIdx = updated.length - 1
+    if (lastIdx >= 0 && updated[lastIdx]!.role === 'assistant') {
+      updated[lastIdx] = { ...updated[lastIdx]!, parts }
+      messages.value = updated
+    }
+  }
 
   const api = chatApi()
   const { promise, abort } = api.streamChat({
@@ -119,9 +141,64 @@ function sendMessage(text: string, fileAttachments?: ChatFileAttachment[]) {
       completedMessageId = packet.messageId || assistantId
     },
 
+    onToolCall(packet: ChatStreamPacket) {
+      if (!assistantAdded) {
+        status.value = 'streaming'
+        messages.value = [...messages.value, {
+          id: completedMessageId || assistantId,
+          role: 'assistant',
+          parts: []
+        }]
+        assistantAdded = true
+      }
+      const callId = packet.toolCallId || `tc-${Date.now()}`
+      let args: Record<string, unknown> = {}
+      if (packet.toolArguments) {
+        try { args = JSON.parse(packet.toolArguments) } catch {}
+      }
+      const inv: ToolInvocationPart = {
+        type: 'tool-invocation',
+        toolName: packet.toolName || 'unknown',
+        toolDisplayName: packet.toolDisplayName || undefined,
+        toolCallId: callId,
+        args,
+        state: 'calling'
+      }
+      toolInvocations.value = { ...toolInvocations.value, [callId]: inv }
+      rebuildAssistantParts()
+    },
+
+    onToolResult(packet: ChatStreamPacket) {
+      const callId = packet.toolCallId
+      if (callId && toolInvocations.value[callId]) {
+        let result: unknown = packet.toolResult
+        if (typeof result === 'string') {
+          try { result = JSON.parse(result) } catch {}
+        }
+        toolInvocations.value = {
+          ...toolInvocations.value,
+          [callId]: { ...toolInvocations.value[callId]!, result, state: 'completed' }
+        }
+        rebuildAssistantParts()
+      }
+    },
+
+    onReasoning(packet: ChatStreamPacket) {
+      if (!assistantAdded) {
+        status.value = 'streaming'
+        messages.value = [...messages.value, {
+          id: completedMessageId || assistantId,
+          role: 'assistant',
+          parts: []
+        }]
+        assistantAdded = true
+      }
+      reasoningText += packet.reasoning || ''
+      rebuildAssistantParts()
+    },
+
     onDelta(packet: ChatStreamPacket) {
       if (!assistantAdded) {
-        // 收到第一个字符：添加助手消息并切换到 streaming 状态
         status.value = 'streaming'
         messages.value = [...messages.value, {
           id: completedMessageId || assistantId,
@@ -131,16 +208,12 @@ function sendMessage(text: string, fileAttachments?: ChatFileAttachment[]) {
         assistantAdded = true
       }
       fullText += packet.delta || ''
-      const updated = [...messages.value]
-      const lastIdx = updated.length - 1
-      if (lastIdx >= 0 && updated[lastIdx]!.role === 'assistant') {
-        updated[lastIdx] = { ...updated[lastIdx]!, parts: [{ type: 'text' as const, text: fullText }] }
-        messages.value = updated
-      }
+      rebuildAssistantParts()
     },
 
     onCompleted(packet: ChatStreamPacket) {
       status.value = 'ready'
+      rebuildAssistantParts()
       conversationStore.fetchConversations()
       if (completedMessageId && (packet.inputTokens || packet.outputTokens)) {
         tokenCounts.value = {
@@ -230,7 +303,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <UDashboardPanel id="chat" class="relative" :ui="{ body: 'p-0 sm:p-0' }">
+  <UDashboardPanel id="chat" class="relative min-h-0" :ui="{ body: 'p-0 sm:p-0 overscroll-none' }">
     <template #header>
       <DashboardNavbar />
     </template>
@@ -250,7 +323,7 @@ onBeforeUnmount(() => {
           class="lg:pt-(--ui-header-height) pb-4 sm:pb-6"
         >
           <template #content="{ message }">
-            <template v-for="(part, index) in (message as any).parts" :key="`${(message as any).id}-${part.type}-${index}`">
+            <template v-for="(part, index) in (message as any).parts" :key="`${(message as any).id}-${part.type}-${index}${'state' in part ? `-${part.state}` : ''}`">
               <Reasoning
                 v-if="part.type === 'reasoning'"
                 :text="part.text"
@@ -267,6 +340,10 @@ onBeforeUnmount(() => {
               <p v-else-if="part.type === 'text' && (message as any).role === 'user'" class="whitespace-pre-wrap">
                 {{ part.text }}
               </p>
+              <ToolInvocation
+                v-else-if="part.type === 'tool-invocation'"
+                :invocation="(part as any)"
+              />
               <FileAvatar
                 v-else-if="part.type === 'file'"
                 :name="(part as any).url?.split('/').pop() || 'file'"

@@ -30,6 +30,12 @@ export default defineNuxtConfig({
     }
   },
 
+  vite: {
+    optimizeDeps: {
+      include: ['striptags']
+    }
+  },
+
   experimental: {
     viewTransition: true
   },

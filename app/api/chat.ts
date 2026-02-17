@@ -11,6 +11,9 @@ export interface StreamChatOptions {
   onDelta?: (packet: ChatStreamPacket) => void
   onCompleted?: (packet: ChatStreamPacket) => void
   onError?: (packet: ChatStreamPacket) => void
+  onToolCall?: (packet: ChatStreamPacket) => void
+  onToolResult?: (packet: ChatStreamPacket) => void
+  onReasoning?: (packet: ChatStreamPacket) => void
 }
 
 function parseSSELine(line: string): ChatStreamPacket | null {
@@ -87,6 +90,15 @@ export function chatApi() {
                 break
               case 'error':
                 options.onError?.(packet)
+                break
+              case 'tool_call':
+                options.onToolCall?.(packet)
+                break
+              case 'tool_result':
+                options.onToolResult?.(packet)
+                break
+              case 'reasoning':
+                options.onReasoning?.(packet)
                 break
             }
           }

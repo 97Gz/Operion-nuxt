@@ -11,7 +11,7 @@ useHead({
   ],
   link: [
     { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
-    { rel: 'icon', href: '/favicon.ico' }
+    { rel: 'icon', href: '/favicon.svg' }
   ],
   htmlAttrs: {
     lang: 'zh-CN'
