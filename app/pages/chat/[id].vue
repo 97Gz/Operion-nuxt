@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { DefineComponent } from 'vue'
 import type { UIMessage, ChatStatus } from 'ai'
-import type { ChatStreamPacket } from '~~/shared/types/api'
+import type { ChatStreamPacket, ChatFileAttachment } from '~~/shared/types/api'
 import { useClipboard } from '@vueuse/core'
 import { messageDtoToUIMessage } from '~/stores/conversation'
 import { chatApi } from '~/api/chat'
@@ -25,8 +25,6 @@ const status = ref<ChatStatus>('ready')
 const input = ref('')
 const chatError = ref<Error | undefined>(undefined)
 const isNew = computed(() => chatId.value === 'new')
-
-// Token 计数存储：messageId -> { input, output }
 const tokenCounts = ref<Record<string, { input: number | null, output: number | null }>>({})
 
 let abortFn: (() => void) | null = null
@@ -47,17 +45,12 @@ async function loadHistory() {
       .filter(m => m.role === 'user' || m.role === 'assistant')
       .map(messageDtoToUIMessage)
 
-    // 加载历史消息后，批量获取所有 assistant 消息的 token 数据
     const assistantMsgs = messages.value.filter(m => m.role === 'assistant')
     if (assistantMsgs.length > 0) {
       fetchTokenCounts(assistantMsgs[0]!.id)
     }
   } catch {
-    toast.add({
-      title: '加载历史消息失败',
-      icon: 'i-lucide-alert-circle',
-      color: 'error'
-    })
+    toast.add({ title: '加载历史消息失败', icon: 'i-lucide-alert-circle', color: 'error' })
   }
 }
 
@@ -65,51 +58,40 @@ async function fetchTokenCounts(messageId: string, retryCount = 0) {
   if (!messageId || tokenCounts.value[messageId]) return
   const api = invocationApi()
 
-  // 优先通过 conversationId 批量查询所有 token 数据
   if (!isNew.value && chatId.value) {
     const invocations = await api.getAllByConversationId(chatId.value)
     if (invocations.length > 0) {
       const newCounts = { ...tokenCounts.value }
       for (const inv of invocations) {
-        // 使用 chatMessageExternalId（即 MAF MessageId）来匹配前端消息
         const key = inv.chatMessageExternalId || inv.chatMessageId
         if (key && (inv.inputTokenCount || inv.outputTokenCount)) {
-          newCounts[key] = {
-            input: inv.inputTokenCount,
-            output: inv.outputTokenCount
-          }
+          newCounts[key] = { input: inv.inputTokenCount, output: inv.outputTokenCount }
         }
       }
       tokenCounts.value = newCounts
-      // 如果找到当前消息的数据，直接返回
       if (newCounts[messageId]) return
     }
   }
 
-  // 回退到通过 messageId 单独查询
   const info = await api.getByMessageId(messageId)
   if (info && (info.inputTokenCount || info.outputTokenCount)) {
     tokenCounts.value = {
       ...tokenCounts.value,
-      [messageId]: {
-        input: info.inputTokenCount,
-        output: info.outputTokenCount
-      }
+      [messageId]: { input: info.inputTokenCount, output: info.outputTokenCount }
     }
   } else if (retryCount < 3) {
     setTimeout(() => fetchTokenCounts(messageId, retryCount + 1), 2000)
   }
 }
 
-function sendMessage(text: string) {
+function sendMessage(text: string, fileAttachments?: ChatFileAttachment[]) {
   if (!text.trim() || status.value === 'streaming' || status.value === 'submitted') return
 
-  const userMsg: UIMessage = {
+  messages.value = [...messages.value, {
     id: `user-${Date.now()}`,
     role: 'user',
     parts: [{ type: 'text' as const, text: text.trim() }]
-  }
-  messages.value = [...messages.value, userMsg]
+  }]
 
   status.value = 'submitted'
   chatError.value = undefined
@@ -125,145 +107,28 @@ function sendMessage(text: string) {
     conversationId: isNew.value ? null : chatId.value,
     agentName: null,
     modelId: model.value || null,
-    files: uploadedFiles.value.length > 0 ? uploadedFiles.value : undefined,
+    files: fileAttachments ?? (uploadedFiles.value.length > 0 ? uploadedFiles.value : undefined),
 
     onStarted(packet: ChatStreamPacket) {
-      status.value = 'streaming'
-
+      // 保存元数据但不改变 status，保持 'submitted' 直到第一个 delta 到达
       if (isNew.value && packet.conversationId) {
         chatId.value = packet.conversationId
         window.history.replaceState({}, '', `/chat/${packet.conversationId}`)
         conversationStore.fetchConversations()
       }
-
-      const newMsg: UIMessage = {
-        id: packet.messageId || assistantId,
-        role: 'assistant',
-        parts: [{ type: 'text' as const, text: '' }]
-      }
-      messages.value = [...messages.value, newMsg]
-      assistantAdded = true
       completedMessageId = packet.messageId || assistantId
     },
 
     onDelta(packet: ChatStreamPacket) {
       if (!assistantAdded) {
-        const newMsg: UIMessage = {
-          id: assistantId,
+        // 收到第一个字符：添加助手消息并切换到 streaming 状态
+        status.value = 'streaming'
+        messages.value = [...messages.value, {
+          id: completedMessageId || assistantId,
           role: 'assistant',
           parts: [{ type: 'text' as const, text: '' }]
-        }
-        messages.value = [...messages.value, newMsg]
+        }]
         assistantAdded = true
-        completedMessageId = assistantId
-      }
-
-      fullText += packet.delta || ''
-      const updated = [...messages.value]
-      const lastIdx = updated.length - 1
-      if (lastIdx >= 0 && updated[lastIdx]!.role === 'assistant') {
-        updated[lastIdx] = {
-          ...updated[lastIdx]!,
-          parts: [{ type: 'text' as const, text: fullText }]
-        }
-        messages.value = updated
-      }
-    },
-
-    onCompleted(packet: ChatStreamPacket) {
-      status.value = 'ready'
-      conversationStore.fetchConversations()
-
-      // 提取 SSE 返回的 token 计数
-      if (completedMessageId && (packet.inputTokens || packet.outputTokens)) {
-        tokenCounts.value = {
-          ...tokenCounts.value,
-          [completedMessageId]: {
-            input: packet.inputTokens ?? null,
-            output: packet.outputTokens ?? null
-          }
-        }
-      } else if (completedMessageId) {
-        // 如果 SSE 未返回 token，异步从后端查询
-        fetchTokenCounts(completedMessageId)
-      }
-    },
-
-    onError(packet: ChatStreamPacket) {
-      status.value = 'error'
-      chatError.value = new Error(packet.error || '请求失败')
-      toast.add({
-        title: packet.error || '请求失败',
-        icon: 'i-lucide-alert-circle',
-        color: 'error',
-        duration: 0
-      })
-    }
-  })
-
-  abortFn = abort
-  clearFiles()
-
-  promise.catch(() => {
-    if (status.value === 'streaming' || status.value === 'submitted') {
-      status.value = 'error'
-      chatError.value = new Error('连接中断')
-    }
-  })
-}
-
-function sendMessageWithFiles(text: string, fileAttachments: import('~~/shared/types/api').ChatFileAttachment[]) {
-  if (!text.trim() || status.value === 'streaming' || status.value === 'submitted') return
-
-  const userMsg: UIMessage = {
-    id: `user-${Date.now()}`,
-    role: 'user',
-    parts: [{ type: 'text' as const, text: text.trim() }]
-  }
-  messages.value = [...messages.value, userMsg]
-
-  status.value = 'submitted'
-  chatError.value = undefined
-
-  const assistantId = `assistant-${Date.now()}`
-  let assistantAdded = false
-  let fullText = ''
-  let completedMessageId = ''
-
-  const api = chatApi()
-  const { promise, abort } = api.streamChat({
-    message: text.trim(),
-    conversationId: isNew.value ? null : chatId.value,
-    agentName: null,
-    modelId: model.value || null,
-    files: fileAttachments,
-
-    onStarted(packet: ChatStreamPacket) {
-      status.value = 'streaming'
-      if (isNew.value && packet.conversationId) {
-        chatId.value = packet.conversationId
-        window.history.replaceState({}, '', `/chat/${packet.conversationId}`)
-        conversationStore.fetchConversations()
-      }
-      const newMsg: UIMessage = {
-        id: packet.messageId || assistantId,
-        role: 'assistant',
-        parts: [{ type: 'text' as const, text: '' }]
-      }
-      messages.value = [...messages.value, newMsg]
-      assistantAdded = true
-      completedMessageId = packet.messageId || assistantId
-    },
-
-    onDelta(packet: ChatStreamPacket) {
-      if (!assistantAdded) {
-        const newMsg: UIMessage = {
-          id: assistantId, role: 'assistant',
-          parts: [{ type: 'text' as const, text: '' }]
-        }
-        messages.value = [...messages.value, newMsg]
-        assistantAdded = true
-        completedMessageId = assistantId
       }
       fullText += packet.delta || ''
       const updated = [...messages.value]
@@ -278,7 +143,10 @@ function sendMessageWithFiles(text: string, fileAttachments: import('~~/shared/t
       status.value = 'ready'
       conversationStore.fetchConversations()
       if (completedMessageId && (packet.inputTokens || packet.outputTokens)) {
-        tokenCounts.value = { ...tokenCounts.value, [completedMessageId]: { input: packet.inputTokens ?? null, output: packet.outputTokens ?? null } }
+        tokenCounts.value = {
+          ...tokenCounts.value,
+          [completedMessageId]: { input: packet.inputTokens ?? null, output: packet.outputTokens ?? null }
+        }
       } else if (completedMessageId) {
         fetchTokenCounts(completedMessageId)
       }
@@ -292,6 +160,8 @@ function sendMessageWithFiles(text: string, fileAttachments: import('~~/shared/t
   })
 
   abortFn = abort
+  if (!fileAttachments) clearFiles()
+
   promise.catch(() => {
     if (status.value === 'streaming' || status.value === 'submitted') {
       status.value = 'error'
@@ -324,27 +194,17 @@ function regenerate() {
 
   const textPart = lastUser.parts.find((p: { type: string }) => p.type === 'text')
   const text = textPart && 'text' in textPart ? (textPart as { type: 'text', text: string }).text : ''
-  if (text) {
-    sendMessage(text)
-  }
+  if (text) sendMessage(text)
 }
 
-const copied = ref(false)
+const copiedId = ref<string | null>(null)
 
 function copy(_e: MouseEvent, message: Record<string, unknown>) {
   const msg = message as unknown as UIMessage
-  let content = ''
-  if (msg.parts) {
-    for (const p of msg.parts) {
-      if (p.type === 'text' && 'text' in p) {
-        content = (p as { type: 'text', text: string }).text
-        break
-      }
-    }
-  }
-  clipboard.copy(content)
-  copied.value = true
-  setTimeout(() => { copied.value = false }, 2000)
+  const textPart = msg.parts?.find(p => p.type === 'text' && 'text' in p)
+  clipboard.copy(textPart && 'text' in textPart ? (textPart as { type: 'text', text: string }).text : '')
+  copiedId.value = msg.id
+  setTimeout(() => { copiedId.value = null }, 2000)
 }
 
 function formatTokenCount(n: number | null | undefined): string {
@@ -355,16 +215,10 @@ function formatTokenCount(n: number | null | undefined): string {
 
 onMounted(async () => {
   const pending = conversationStore.consumePendingMessage()
-  const pendingFilesList = conversationStore.consumePendingFiles()
+  const pendingFiles = conversationStore.consumePendingFiles()
 
   if (pending && isNew.value) {
-    // 如果有从首页带过来的文件附件，临时设置到 uploadedFiles 对应位置
-    if (pendingFilesList.length > 0) {
-      // 直接将文件作为参数传给 sendMessageWithFiles
-      sendMessageWithFiles(pending, pendingFilesList)
-    } else {
-      sendMessage(pending)
-    }
+    sendMessage(pending, pendingFiles.length > 0 ? pendingFiles : undefined)
   } else {
     await loadHistory()
   }
@@ -389,7 +243,7 @@ onBeforeUnmount(() => {
           :status="status"
           :assistant="status !== 'streaming' ? {
             actions: [
-              { label: 'Copy', icon: copied ? 'i-lucide-copy-check' : 'i-lucide-copy', onClick: copy }
+              { label: 'Copy', icon: copiedId === (messages[messages.length - 1] as any)?.id ? 'i-lucide-copy-check' : 'i-lucide-copy', onClick: copy }
             ]
           } : { actions: [] }"
           :spacing-offset="160"
@@ -422,16 +276,10 @@ onBeforeUnmount(() => {
             </template>
           </template>
 
-          <template #indicator>
-            <span />
-            <span />
-            <span />
-          </template>
-
           <template #actions="{ message }">
             <template v-if="(message as any).role === 'assistant' && status !== 'streaming'">
               <UButton
-                :icon="copied ? 'i-lucide-copy-check' : 'i-lucide-copy'"
+                :icon="copiedId === (message as any).id ? 'i-lucide-copy-check' : 'i-lucide-copy'"
                 color="neutral"
                 variant="ghost"
                 size="xs"

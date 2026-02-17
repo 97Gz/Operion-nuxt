@@ -1,4 +1,5 @@
 import type { TokenResponse } from '~~/shared/types/api'
+import { useAuthStore } from '~/stores/auth'
 
 let refreshPromise: Promise<TokenResponse | null> | null = null
 
@@ -30,6 +31,17 @@ async function doRefresh(apiBase: string, refreshToken: string): Promise<TokenRe
   } catch {
     return null
   }
+}
+
+function handleAuthFailure() {
+  localStorage.removeItem('auth')
+  try {
+    const authStore = useAuthStore()
+    authStore.$reset()
+  } catch {
+    // Pinia 可能未初始化，静默处理
+  }
+  navigateTo('/login')
 }
 
 export async function apiFetch<T>(
@@ -71,12 +83,11 @@ export async function apiFetch<T>(
         headers.set('Authorization', `Bearer ${newTokens.accessToken}`)
         res = await fetch(url, { ...options, headers })
       } else {
-        localStorage.removeItem('auth')
-        navigateTo('/login')
+        handleAuthFailure()
         throw new Error('认证已过期，请重新登录')
       }
     } else {
-      navigateTo('/login')
+      handleAuthFailure()
       throw new Error('未登录')
     }
   }
@@ -99,22 +110,46 @@ export function apiStreamFetch(
 
   const controller = new AbortController()
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Accept': 'text/event-stream'
+  const makeRequest = (accessToken?: string): Promise<Response> => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'Accept': 'text/event-stream'
+    }
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`
+    }
+    return fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: controller.signal
+    })
   }
 
-  const tokens = getStoredTokens()
-  if (tokens?.accessToken) {
-    headers['Authorization'] = `Bearer ${tokens.accessToken}`
-  }
+  const response = (async (): Promise<Response> => {
+    const tokens = getStoredTokens()
+    let res = await makeRequest(tokens?.accessToken)
 
-  const response = fetch(url, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: controller.signal
-  })
+    if (res.status === 401 && tokens?.refreshToken) {
+      if (!refreshPromise) {
+        refreshPromise = doRefresh(apiBase, tokens.refreshToken).finally(() => {
+          refreshPromise = null
+        })
+      }
+      const newTokens = await refreshPromise
+      if (newTokens) {
+        setStoredTokens({
+          accessToken: newTokens.accessToken,
+          refreshToken: newTokens.refreshToken
+        })
+        res = await makeRequest(newTokens.accessToken)
+      } else {
+        handleAuthFailure()
+      }
+    }
+
+    return res
+  })()
 
   return {
     response,

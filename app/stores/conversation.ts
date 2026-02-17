@@ -3,9 +3,12 @@ import type { UIMessage } from 'ai'
 import type { ConversationDto, MessageDto, ChatFileAttachment } from '~~/shared/types/api'
 import { conversationApi } from '~/api/conversation'
 
+const PAGE_SIZE = 50
+
 interface ConversationState {
   conversations: ConversationDto[]
   loading: boolean
+  hasMore: boolean
   pendingMessage: string | null
   pendingFiles: ChatFileAttachment[]
 }
@@ -14,6 +17,7 @@ export const useConversationStore = defineStore('conversation', {
   state: (): ConversationState => ({
     conversations: [],
     loading: false,
+    hasMore: true,
     pendingMessage: null,
     pendingFiles: []
   }),
@@ -38,9 +42,26 @@ export const useConversationStore = defineStore('conversation', {
       this.loading = true
       try {
         const api = conversationApi()
-        this.conversations = await api.list()
+        this.conversations = await api.list(0, PAGE_SIZE)
+        this.hasMore = this.conversations.length >= PAGE_SIZE
       } catch {
         this.conversations = []
+        this.hasMore = false
+      } finally {
+        this.loading = false
+      }
+    },
+
+    async fetchMoreConversations() {
+      if (this.loading || !this.hasMore) return
+      this.loading = true
+      try {
+        const api = conversationApi()
+        const more = await api.list(this.conversations.length, PAGE_SIZE)
+        this.conversations = [...this.conversations, ...more]
+        this.hasMore = more.length >= PAGE_SIZE
+      } catch {
+        // 加载更多失败，静默处理
       } finally {
         this.loading = false
       }

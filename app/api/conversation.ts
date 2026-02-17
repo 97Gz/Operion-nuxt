@@ -3,8 +3,8 @@ import { apiFetch } from './client'
 
 export function conversationApi() {
   return {
-    list() {
-      return apiFetch<ConversationDto[]>('/api/conversation')
+    list(skip = 0, take = 50) {
+      return apiFetch<ConversationDto[]>(`/api/conversation?skip=${skip}&take=${take}`)
     },
 
     get(id: string) {

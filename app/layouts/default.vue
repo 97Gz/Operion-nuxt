@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { LazyModalConfirm } from '#components'
+import { useIntersectionObserver } from '@vueuse/core'
 
 const route = useRoute()
 const toast = useToast()
@@ -8,6 +9,7 @@ const authStore = useAuthStore()
 const conversationStore = useConversationStore()
 
 const open = ref(false)
+const loadMoreRef = ref<HTMLElement>()
 
 const deleteModal = overlay.create(LazyModalConfirm, {
   props: {
@@ -42,6 +44,12 @@ const items = computed(() => groups.value?.flatMap((group) => {
     class: item.label === '未命名' ? 'text-muted' : ''
   }))]
 }))
+
+useIntersectionObserver(loadMoreRef, ([entry]) => {
+  if (entry?.isIntersecting && conversationStore.hasMore && !conversationStore.loading) {
+    conversationStore.fetchMoreConversations()
+  }
+}, { threshold: 0.1 })
 
 async function deleteChat(id: string) {
   const instance = deleteModal.open()
@@ -129,6 +137,11 @@ defineShortcuts({
             </div>
           </template>
         </UNavigationMenu>
+
+        <!-- 滚动加载哨兵：滚到底部时自动加载更多会话 -->
+        <div v-if="!collapsed && conversationStore.hasMore" ref="loadMoreRef" class="flex justify-center py-2">
+          <UIcon v-if="conversationStore.loading" name="i-lucide-loader-2" class="size-4 animate-spin text-muted" />
+        </div>
       </template>
 
       <template #footer="{ collapsed }">

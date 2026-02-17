@@ -21,8 +21,8 @@ export function useModels() {
           model.value = defaultModel.modelId
         }
       }
-    } catch (e) {
-      console.warn('Failed to fetch models:', e)
+    } catch {
+      // 静默处理：模型列表加载失败不影响主流程
     }
   }
 
